@@ -1,4 +1,4 @@
-# odoo_istall
+# odoo_install
 Bash script for a complete odoo/ocb v8 install under ubuntu 14.04
 .. image:: https://img.shields.io/badge/licence-AGPL--3-blue.svg
     :alt: License
@@ -6,13 +6,13 @@ Bash script for a complete odoo/ocb v8 install under ubuntu 14.04
 Ubuntu installer
 ===================
 
-This bash script install Odoo or Ocb (choice us menu driven).
+This bash script install Odoo or Ocb version 8.0 (choice us menu driven).
 
 The script install the postgresql server, (configuring user and connection/authentication settings files)
-the neede python libraries
+the needed python libraries
 wkhtmltox 12.01 libraries
 the odoo/ocb 8.0 branch, and its configuration file
-italian localization module, creating symbolic links of directories in the addons dir
+italian localization modules, creating symbolic links of directories in the addons dir
 the init script for upstart daemon
 
 
@@ -29,9 +29,11 @@ Nothing special is needed to install this module.
 
 Known issues / Roadmap
 ======================
-Acqually only ubuntu 14.04 LTS suppoerted (32 and 64 bit)
-ther are PROBLEMS with italian installation; after italian addons modules installation the server cannot start.
-Removing the symlinks to italian addons everithing works flawlessy
+Actually only ubuntu 14.04 LTS is suppoerted (32 and 64 bit)
+
+there are PROBLEMS with italian installation; 
+after italian addons modules installation, the server cannot start.
+Removing the symlinks to italian addons everithing works flawlessy. Work in progress...
 
 
 
