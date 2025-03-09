@@ -4,7 +4,7 @@
 {
     'name': 'Full Accounting Activation',
     'summary': 'Base module to enable full accounting feature for admin user',
-    'version': '14.0.1.0.0',
+    'version': '18.0.1.0.0',
     'category': 'Hidden',
     'author': "Sergio Zanchetta",
     'website': 'https://gitlab.com/PNLUG/Odoo/repository/iso_addons',
