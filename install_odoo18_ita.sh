@@ -19,10 +19,15 @@
 #- create_odoo_db(): - crea due database in postgres:  ${database} e ${database}_demo con owner l'utente $user (odoo)
 #- setup_config_and_log(): crea il file di configurazione per odoo in /etc/odoo partendo dal template OCB/debian/odoo.conf
 #                          crea un file vuoto per i log in /var/odoo 
-#- install_minimal_odoo():#lancia la procedura di installazione con odoo-bin, per il solo modulo base, sui database  ${database}_demo e  ${database}
-#- install_core_addons(): installa i moduli core di Odoo (OCB/addons), elencati nella variabile  $coreaddons
-#- install_oca_addons(): installa i moduli di OCA (addons/OCA) installati precedentemente dalla procedura clone_repos(), accumulando un  directory listing delle directory dei moduli
-#                        installa i moduli custom (addons/custom) , essenzialmente il full_accounting_activation
+#                           veriica se il file di config è già esistente e se gli addon_path  già inseriti contengono già i dati da accodare
+#- install_base_and_core_addons():lancia la procedura di installazione con odoo-bin, sui database  ${database}_demo e  ${database}
+#                         installando:
+#                         - il modulo base di Odoo
+#                         - i moduli core di Odoo (OCB/addons), elencati nella variabile  $coreaddons
+#                         - i moduli custom (addons/custom) , essenzialmente il full_accounting_activation
+#- install_oca_addons(): rintraccia tutti i moduli di OCA (addons/OCA) scaricati precedentemente nei repo clonati con la procedura clone_repos(), 
+#                         e aggiunge i retativi path nel file di configurazione
+#                        
 #- odoo_service_enable(): #rende il servizio odoo un daemon di system, creando un file di configurazione per systemctl e attivandolo
 #
 #
@@ -77,16 +82,20 @@ user="odoo"
 odoodir="/opt/$user"
 addonsdir="$odoodir/$odoover.0/addons"
 addonsocadir="$addonsdir/OCA"
-addonscustomdir="$addonsdir/custom"
+addonscustomdir="$addonsdir/custom/Giuliano69"
+
 http_port="8069"
 
 database="contabita$odoover"
 psql_password="admin"
 
 repodirs="$odoodir/$odoover.0/OCB/addons,$odoodir/$odoover.0/OCB/odoo/addons,"      
-customrepos="odoo_install"
 
-#set core addons to install
+
+customaddons="full_accounting_activation"
+customrepos="full_accounting_activation"
+
+#set core addons to install (core addons are located under /OCB/addons) 
 coreaddons="
 l10n_it
 l10n_it_edi
@@ -98,9 +107,17 @@ l10n_it_withholding
 l10n_it_stock_ddt
 product
 account
+invoicing
+inventory
+sales
+purchase
+point_of_sale
+pos_epson_printer
+pos_discount
+repair
 "
 
-#set OCA repos
+#set OCA repos to download from github, and stored in /addons/OCA/
 ocarepos="
 l10n-italy
 account-analytic
@@ -119,7 +136,6 @@ community-data-files
 e-commerce
 intrastat-extrastat
 mis-builder
-pos
 product-attribute
 report-print-send
 reporting-engine
@@ -240,8 +256,6 @@ function header_echo {
     echowhite "# Now Running:  $UPPER   "
     echoblue "# -----------------------------------------------------------------------------"
 }
-#-------------------------------------------------------
-
 function install_packages()
 #installazione dei programmi e librerire di sistema necessarie
 {
@@ -304,8 +318,7 @@ function create_users()
         #echogreen "Created PostresSql user $user with password $psql_password"
     fi
 }
-#--------------------------------------------------------------- sudo -u postgres psql -c "ALTER USER \"odoo\" with PASSWORD \"admin\";"
-
+#-------------------------------------------------------
 function clone_odoo()
 #- download da github la versione $odoover di odoo OCB
 {
@@ -338,6 +351,8 @@ function clone_odoo()
     find "$odoodir" -type d -exec chmod 750 {}  \;
     chown -R $user:$user $odoodir
 }    
+
+
 #---------------------------------------------------------------
 
 function clone_repos()
@@ -389,7 +404,7 @@ function clone_repos()
         if [ ! -d "$addonscustomdir/$repo" ] 
         then
             # branch: main vs master
-            git clone https://github.com/Giuliano69/$repo.git --depth=1 --branch="master" --single-branch $addonscustomdir/$repo 
+            git clone https://github.com/Giuliano69/$repo.git --depth=1 --branch="main" --single-branch $addonscustomdir/$repo 
             if [ $? -ne 0 ]; then { 
                 echored "Failed cloning repo $repo, aborting"  
                 exit 1
@@ -413,6 +428,7 @@ function clone_repos()
 }
 #-----------------------------------------------------------------------------------------------
 
+#-----------------------------------------------------------------------------------------------
 function create_venv() 
 #prepara un virtualenv per odoo, caricando anche i moduli python richiesti da tutti i repo scaricati con clone_repos()
 {
@@ -441,56 +457,6 @@ function create_venv()
 }
 #-----------------------------------------------------------------------------------------------
 
-function setup_config_and_log() 
-#crea il file di configurazione per odoo in /etc/odoo partendo dal template OCB/debian/odoo.conf
-#crea un file vuoto per i log in /var/odoo 
-{
-    header_echo $FUNCNAME
-    #----------------------------------------------------------------------
-    # Prepare a list of repos directories
-    for repo in ${ocarepos}
-    do
-        repodirs+="${addonsocadir}/${repo},"
-    done
-    if [[ ! -z "$customrepos" ]]
-    then
-        for repo in ${customrepos}
-        do
-            repodirs+="${addonscustomdir}/${repo},"
-        done
-    fi
-    #purge last "," char
-    repodirs=${repodirs%,}
-        
-    ## Setup odoo config file if it does not exist 
-    if [[ ! -f "/etc/odoo/odoo$odoover.conf" ]] 
-    then 
-        mkdir -p /etc/odoo
-        cp /opt/$user/$odoover.0/OCB/debian/odoo.conf /etc/odoo/odoo$odoover.conf
-        chmod  a+rwx,u-x,g-wx,o-rwx  /etc/odoo/odoo$odoover.conf
-        #chmod 640 /etc/odoo/odoo$odoover.conf
-        echo "addons_path = ${repodirs}" >> /etc/odoo/odoo$odoover.conf
-        echo "http_port = $http_port"  >> /etc/odoo/odoo$odoover.conf
-        chown $user:$user /etc/odoo/odoo$odoover.conf
-        echogreen "/etc/odoo/odoo$odoover.conf created"
-    else
-        echored "/etc/odoo/odoo$odoover.conf already exist. Leaved unmodified !"
-    fi
-
-     ## Setup odoo log file    
-    if [[ ! -f "/var/log/odoo/odoo$odoover-server.log" ]] 
-    then 
-        mkdir -p /var/log/odoo
-        touch /var/log/odoo/odoo$odoover-server.log
-        # for adm group -> https://wiki.debian.org/SystemGroups
-        chown root:$user /var/log/odoo
-        chmod a+rwx,g-w,o-rwx /var/log/odoo
-        chown $user:adm /var/log/odoo/odoo$odoover-server.log
-        #chmod 640 /var/log/odoo/odoo$odoover-server.log
-        chmod  a+rwx,u-x,g-wx,o-rwx  /var/log/odoo/odoo$odoover-server.log
-        echogreen "/var/log/odoo/odoo$odoover-server.log created"
-    fi
-}
 #----------------------------------------------------------------------------------------
 function create_odoo_db() 
 #crea due database in postgres:  ${database} e ${database}_demo con owner l'utente $user (odoo)
@@ -512,49 +478,51 @@ function create_odoo_db()
     fi
 }
 #----------------------------------------------------------------------------------------
-function install_minimal_odoo() 
-#lancia la procedura di installazione con odoo-bin, per il solo modulo base, sui database  ${database}_demo e  ${database}
-{
-    ## install the core addons in the oddo database
-    header_echo $FUNCNAME
-    #----------------------------------------------------------------------
-    log_file="/var/log/odoo/odoo$odoover-server.log"
-    conf_file="/etc/odoo/odoo$odoover.conf"
-  
-    
-    echoblue "installing odoo minimal module (base) in database $database" 
-    su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin  --config $conf_file -i base -d ${database} --without-demo=all --load-language=it_IT    --stop-after-init"
-    echoblue "installing odoo minimal module (base) in database $database_demo" 
-    su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin  --config $conf_file -i base -d ${database}_demo               --load-language=it_IT    --stop-after-init"    
-    
-    echogreen "RUNNING ODOO INSTANCE"
-    su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin --config $odoodir/$odoover.0/OCB//myodoo.cfg -d ${database}_demo,${database}"
+#----------------------------------------------------------------------------------------
 
-}#----------------------------------------------------------------------------------------
-
-function install_core_addons() 
+function install_base_and_core_addons() 
+#installa il modulo base OCB/odoo/addons
 #installa i moduli core di Odoo (OCB/addons), elencati nella variabile  $coreaddons
 {
     ## install the core addons in the oddo database
     header_echo $FUNCNAME
     #----------------------------------------------------------------------
+    base_addons_path="$odoodir/$odoover.0/OCB/odoo/addons"      
+    core_addons_path="$odoodir/$odoover.0/OCB/addons"      
+    custom_addons_path+="$addonscustomdir/"$custom_addons
+    
+    addons_path=${base_addons_path}","${core_addons_path}","${custom_addons_path}
+    echoblue $addons_path
+    setup_config_and_log  $addons_path
+    
 
-    addons="" 
-    for module in ${coreaddons}
+    #core addons_list to be passed to odoo-bin to install specific addons from core addons
+    core_addons_list="" 
+    for addon in ${coreaddons}
     do
-        #add selected core add-ons to addon module list; check if core module directory exist
-        if [ -d "$odoodir/$odoover.0/OCB/addons/$module" ]; then 
-            addons+="$module,"
+        #check if core addon directory exist and add selected core add-ons to core_addon_list; 
+        if [ -d "$odoodir/$odoover.0/OCB/addons/$addon" ]; then 
+            core_addons_list+="$addon,"
         fi    
     done
-        addons=${addons%,}
-    addons=`echo ${addons} | sed 's/ /,/g'` 
+    echoblue "customaddons: $customaddons"
+    #append addons from custom repos list
+    if [[ ! -z "$customaddons" ]]
+    then
+        for addon in ${customaddons}
+        do
+            core_addons_list+="${addon},"
+        done
+    fi
+    #purge last "," char
+    core_addons_list=${core_addons_list%,}
+    core_addons_list=`echo ${core_addons_list} | sed 's/ /,/g'` 
+    echoblue $core_addons_list 
+    #read -p "Ready to start module initialization....Press enter to continue"
+
     
-    echoblue $addons 
-    #read -p "Press enter to continue"
-    
-    su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin -c /etc/odoo/odoo$odoover.conf -i ${addons} -d ${database} --without-demo=all --load-language=it_IT --stop-after-init"
-    su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin -c /etc/odoo/odoo$odoover.conf -i ${addons} -d ${database}_demo --load-language=it_IT --stop-after-init"
+    su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin -c /etc/odoo/odoo$odoover.conf -i base,${core_addons_list} -d ${database} --without-demo=all --load-language=it_IT --stop-after-init"
+    su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin -c /etc/odoo/odoo$odoover.conf -i base,${core_addons_list} -d ${database}_demo --load-language=it_IT --stop-after-init"
     sleep 2
     
     ## Kill process if $user process doesn't stop after initialization
@@ -564,12 +532,14 @@ function install_core_addons()
         killall $user
     fi
      
-    echogreen "RUNNING ODOO INSTANCE"
-    su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin --config $odoodir/$odoover.0/OCB//myodoo.cfg -d ${database}_demo,${database}"
+    echogreen "RUNNING LOCAL ODOO INSTANCE (local config file) "
+    su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin --config /etc/odoo/odoo$odoover.conf -d ${database}_demo,${database}"
     
     
 }
-#-----------------------------------------------------------
+
+#----------------------------------------------------------------------------------------
+
 function install_oca_addons()
 #installa i moduli di OCA (addons/OCA) installati precedentemente dalla procedura clone_repos(), accumulando un  directory listing delle directory dei moduli
 # installa i moduli custom (addons/custom) , essenzialmente il full_accounting_activation
@@ -577,33 +547,48 @@ function install_oca_addons()
     ## install the core addons in the oddo database
     header_echo $FUNCNAME
     #----------------------------------------------------------------------
-
-    # Collect installed module names reading the local repo directories; Module names will be used during first Odoo run, for module installation
-    modules=""
+    
+    # Collect:
+    # - list of module name to install with with odoo-bin
+    # - path to oca module's to add in odoo.config
+    oca_addons_list=""
+    oca_addons_path=""
     nomodule=","
     for repo in ${ocarepos}
     do
-        #list only  the name for OCA directories; exclude  directories matching 'setup' and empty directories (",")
-        #modules+="`ls -l ${addonsocadir}/${repo} | grep ^d | awk '{print $9}' | grep --invert-match 'setup'`,"
+        #get  the module names inside each local cloned OCA repo; exclude/filter  directories matching 'setup' and empty directories (",")
         temp="`ls -l ${addonsocadir}/${repo} | grep ^d | awk '{print $9}' | grep --invert-match 'setup'`,"
         if [[ $temp != $nomodule ]]; then  
-            modules+=$temp
-        fi    
+            oca_addons_list+=$temp
+            oca_addons_path+="${addonsocadir}/${repo},"
+        fi  
+        echoblue "repo: $repo"
+        echoblue "list: $oca_addons_list"
+        echoblue "path: $oca_addons_path"
     done
     
-    for repo  in ${customrepos}
-    do
-        #list only  custom directory  name; exclude  directories matching 'setup'
-        modules+="`ls -l ${addonscustomdir}/${repo} | grep ^d | awk '{print $9}' | grep --invert-match 'setup'`,"
-    done
-    modules=${modules%,}
-    modules=`echo ${modules} | sed 's/ /,/g'`    
     
-    echo $modules
-    read -p "Press Enter to continue"
+    #purge last "," char
+    oca_addons_list=${oca_addons_list%,}
+    oca_addons_list=`echo ${oca_addons_list} | sed 's/ /,/g'`   
+    oca_addons_path=${oca_addons_path%,}
+    oca_addons_path=`echo ${oca_addons_path} | sed 's/ /,/g'`  
     
-    su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin -c /etc/odoo/odoo$odoover.conf -i ${modules} -d ${database} --without-demo=all --load-language=it_IT --stop-after-init"
-    #su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin -c /etc/odoo/odoo$odoover.conf -i ${modules} -d ${database}_demo --load-language=it_IT --stop-after-init"
+    echoblue "lista dei moduli da installare: $oca_addons_list"
+    echogreen "----------------"
+    #echoblue "da aggiungere ad addons_path:: $oca_addons_path"
+    #read -p "Press Enter to continue"
+    
+    #update odoo.config addons_path with new modules
+    setup_config_and_log  $oca_addons_path
+
+    #echogreen "installiamo i moduli in Odoo:...."
+    #read -p "Press enter to continue"
+    
+    #Just For now, NOT installing the modules ... install them by web interface if needed
+    #su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin -c /etc/odoo/odoo$odoover.conf -i ${oca_addons_list} -d ${database} --without-demo=all --load-language=it_IT --stop-after-init"
+    #su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin -c /etc/odoo/odoo$odoover.conf -i ${oca_addons_list} -d ${database}_demo --load-language=it_IT --stop-after-init"
+    
     
     sleep 2
     ## Kill process if $user process doesn't stop after initialization
@@ -613,10 +598,11 @@ function install_oca_addons()
         killall $user
     fi
     
-    echogreen "RUNNING ODOO INSTANCE"
-    su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin --config $odoodir/$odoover.0/OCB//myodoo.cfg -d ${database}_demo,${database}"
+    #echogreen "RUNNING ODOO INSTANCE"
+    #su - $user -c "source $odoodir/$odoover.0/venv$odoover/bin/activate && $odoodir/$odoover.0/OCB/odoo-bin --config /etc/odoo/odoo$odoover.conf -d ${database}_demo,${database} --logfile /var/log/odoo/odoo$odoover-server.log"
   
 }
+
 
 #---------------------------------------------------------------
 function odoo_service_enable() 
@@ -680,7 +666,8 @@ function debug_odoo_service_disable()
     fi
 }
 #---------------------------------------------------------------
-function debug_remove_odoo(){
+function debug_remove_odoo()
+{
 #cancella i database installati, rimuove l'utente odoo con la relativa directory e i repo scaricati
 #rimuove i file di configurazione e di log
     su - postgres -c 'dropdb contabita18'
@@ -718,6 +705,63 @@ function debug_add_single_repo()
     
     install_oca_addons
 }
+#--------------------------------------------------------------------------
+function setup_config_and_log () 
+#crea il file di configurazione per odoo in /etc/odoo partendo dal template OCB/debian/odoo.conf
+#crea un file vuoto per i log in /var/odoo 
+# se il file di config NON esiste, imposta addons_path ad $1
+# altrimenti accoda $1
+{
+    #----------------------------------------------------------------------
+    header_echo $FUNCNAME
+    newpaths=","$1
+    echoblue "New addons_path passato: $1"
+    
+    ## Setup odoo config file if it does not exist 
+    if [[ ! -f "/etc/odoo/odoo$odoover.conf" ]] 
+    then 
+        #config file for odoo not found. Create a newone
+        mkdir -p /etc/odoo
+        cp /opt/$user/$odoover.0/OCB/debian/odoo.conf /etc/odoo/odoo$odoover.conf
+        echo "addons_path = $1" >> /etc/odoo/odoo$odoover.conf
+        echo "http_port = $http_port"  >> /etc/odoo/odoo$odoover.conf
+        #echo "logfile = /var/log/odoo/odoo$odoover-server.log"  >> /etc/odoo/odoo$odoover.conf
+        chown $user:$user /etc/odoo/odoo$odoover.conf
+        chmod  a+rwx,u-x,g-wx,o-rwx  /etc/odoo/odoo$odoover.conf
+        #chmod 640 /etc/odoo/odoo$odoover.conf
+        echogreen "/etc/odoo/odoo$odoover.conf created"
+    else
+        #Odoo config file alrady exists. Possile update..
+        #test if $newpath is already present int configfile
+        grep  $newpaths /etc/odoo/odoo$odoover.conf
+        if [ $? -eq 0 ]
+        then
+            #path already present. No need to update.
+            echo "$newpaths già presente nel file di configurazione"
+        else
+            #append config file line startign with "addons_path=" the newpaths; 
+            #sed delimiter char is changed to ":" because $newpaths contains "/" inside
+            echogreen "aggiungo $newpaths al file di configurazione di Odoo"
+            sed  -i "s:^addons_path.*:& $newpaths:" /etc/odoo/odoo$odoover.conf
+            chown $user:$user /etc/odoo/odoo$odoover.conf
+        fi
+    fi  
+
+     ## Setup odoo log file    
+    if [[ ! -f "/var/log/odoo/odoo$odoover-server.log" ]] 
+    then 
+        mkdir -p /var/log/odoo
+        touch /var/log/odoo/odoo$odoover-server.log
+        # for adm group -> https://wiki.debian.org/SystemGroups
+        chown root:$user /var/log/odoo
+        chmod a+rwx,g-w,o-rwx /var/log/odoo
+        chown $user:adm /var/log/odoo/odoo$odoover-server.log
+        #chmod 640 /var/log/odoo/odoo$odoover-server.log
+        chmod  a+rwx,u-x,g-wx,o-rwx  /var/log/odoo/odoo$odoover-server.log
+        echogreen "/var/log/odoo/odoo$odoover-server.log created"
+    fi
+}
+#----------------------------------------------------------------------------------------
 #00000000000000000000000000000000000000000000000000000000000000000000
 #-------------------------------------------------------------------
 
@@ -733,20 +777,14 @@ create_venv
 
 create_odoo_db
 
-setup_config_and_log
+install_base_and_core_addons
 
-install_minimal_odoo
-
-install_core_addons
-
-install_oca_addons
+#install_oca_addons
 
 #odoo_service_enable
 
 
 
-#debug_remove_odoo
-#debug_odoo_service_disable
-#debug_add_single_repo "partner-contact"
-#debug_remove_odoo
+
+# my personal CLI command 
 #su - odoo -c "/opt/odoo/18.0/venv18/bin/python3 /opt/odoo/18.0/OCB/odoo-bin -c /etc/odoo/odoo18.conf --logfile /var/log/odoo/odoo18-server.log"
